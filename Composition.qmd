@@ -1,0 +1,80 @@
+---
+title: "Mukura_Gishwati"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+# Load packages
+library(readxl)
+library(dplyr)
+library(ggplot2)
+
+# 1. Read the dataset
+df <- read_excel("/Users/blaise/Rwanda_National Parks/Restoration/Data_Mukura.xlsx")
+
+
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
+```{r}
+# 2. Calculate species richness per Plot × Time
+#    (number of unique species in each plot at each time point)
+richness_df <- df %>%
+  group_by(Treatment, Block, Plot_id, Time) %>%
+  summarise(SpeciesCount = n_distinct(Species_Name), .groups = "drop")
+
+
+```
+
+```{r}
+# 3. Calculate mean and SE for each Treatment × Time
+summary_df <- richness_df %>%
+  group_by(Treatment, Time) %>%
+  summarise(
+    mean_count = mean(SpeciesCount),
+    se_count = sd(SpeciesCount) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# 4. Ensure Time is in the right order (Before then After)
+summary_df$Time <- factor(summary_df$Time, levels = c("Before", "After"))
+
+
+```
+
+```{r}
+# 5. Make the interaction line plot
+ggplot(summary_df, aes(x = Time, y = mean_count, 
+                       group = Treatment, color = Treatment)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_count - se_count, ymax = mean_count + se_count),
+                width = 0.1, size = 0.8) +
+  labs(
+    x = "Time",
+    y = "Mean species count (± SE)",
+    title = "Interaction plot: Mean species count before vs after by treatment"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "right",
+    legend.title = element_blank()
+  )
+
+```
