@@ -1,0 +1,515 @@
+---
+title: "Mukura_Gishwati"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+# Load packages
+library(readxl)
+library(dplyr)
+library(ggplot2)
+
+# 1. Read the dataset
+df <- read_excel("/Users/blaise/Rwanda_National Parks/Restoration/Data_Mukura.xlsx")
+
+
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
+```{r}
+# 2. Calculate species richness per Plot × Time
+#    (number of unique species in each plot at each time point)
+# Filter out species that were absent (Individual_count == 0)
+richness_df <- df %>%
+  filter(Individual_count > 0) %>%  # Keep only species actually present
+  group_by(Treatment, Block, Plot_id, Time) %>%
+  summarise(SpeciesCount = n_distinct(Species_Name), .groups = "drop")
+
+
+
+```
+
+```{r}
+# 3. Calculate mean and SE for each Treatment × Time
+summary_df <- richness_df %>%
+  group_by(Treatment, Time) %>%
+  summarise(
+    mean_count = mean(SpeciesCount),
+    se_count = sd(SpeciesCount) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# 4. Ensure Time is in the right order (Before then After)
+summary_df$Time <- factor(summary_df$Time, levels = c("Before", "After"))
+
+
+```
+
+```{r}
+# 5. Make the interaction line plot
+library(ggplot2)
+
+# Your plot code saved into an object
+p <- ggplot(summary_df, aes(x = Time, y = mean_count, 
+                            group = Treatment, color = Treatment)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_count - se_count, ymax = mean_count + se_count),
+                width = 0.2, size = 1) +
+  labs(
+    x = "Time",
+    y = "Mean species count (± SE)",
+    title = "Interaction plot: Mean species count before vs after by treatment"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "right",
+    legend.title = element_blank()
+  )
+
+# Save high-resolution PNG
+ggsave(
+  filename = "interaction_plot_highres.png", # file name
+  plot = p,                                  # plot object
+  width = 8,                                 # width in inches
+  height = 6,                                # height in inches
+  dpi = 600                                  # resolution
+)
+
+
+```
+
+Statistical analysis
+
+```{r}
+# Load packages
+library(dplyr)
+library(ggplot2)
+library(lme4)       # for GLMM
+library(DHARMa)     # for residual diagnostics
+library(emmeans)    # for estimated marginal means
+
+
+
+
+# 1. Fit GLMM with Poisson distribution
+# Ensure factors are set correctly
+richness_df <- richness_df %>%
+  mutate(
+    Treatment = factor(Treatment),
+    Time = factor(Time, levels = c("Before", "After")),
+    Block = factor(Block),
+    Plot_id = factor(Plot_id)
+  )
+
+# Model: SpeciesCount ~ Treatment × Time + (1 | Block) + (1 | Block:Plot_id)
+glmm_model <- glmer(
+  SpeciesCount ~ Treatment * Time + (1 | Block) + (1 | Block:Plot_id),
+  data = richness_df,
+  family = poisson(link = "log")
+)
+
+
+```
+
+```{r}
+# 2. Check for overdispersion and residual diagnostics
+simulation_output <- simulateResiduals(glmm_model)
+plot(simulation_output)
+
+
+```
+
+```{r}
+# 3. Estimated marginal means for Treatment × Time
+emm <- emmeans(glmm_model, ~ Treatment * Time)
+
+# Pairwise contrasts for before–after differences between treatments
+# Tukey adjustment for multiple comparisons
+contrast_results <- contrast(emm, method = "revpairwise", by = "Time", adjust = "tukey")
+
+# Differences in change over time (interaction contrasts)
+change_contrasts <- contrast(emmeans(glmm_model, ~ Treatment | Time),
+                             method = "pairwise", adjust = "tukey")
+
+
+
+```
+
+```{r}
+# 4. Output model summary and post-hoc results
+summary(glmm_model)
+emm
+contrast_results
+change_contrasts
+
+```
+
+```{r}
+library(car)
+Anova(glmm_model,type="III",test="Chisq")
+```
+
+Correct the model fitting
+
+```{r}
+library(glmmTMB)
+
+# Negative binomial fit
+glmm_model_nb <- glmmTMB(
+  SpeciesCount ~ Treatment * Time + (1 | Block) + (1 | Block:Plot_id),
+  data = richness_df,
+  family = nbinom2(link = "log")  # NB2: variance = mean + mean^2/dispersion
+)
+
+summary(glmm_model_nb)
+
+# Compare to Poisson fit using AIC
+AIC(glmm_model, glmm_model_nb)
+
+# Check residual diagnostics
+library(DHARMa)
+res_nb <- simulateResiduals(glmm_model_nb)
+plot(res_nb)
+testDispersion(res_nb)
+testZeroInflation(res_nb)
+
+```
+
+```{r}
+glmm_model_zinb <- glmmTMB(
+  SpeciesCount ~ Treatment * Time + (1 | Block) + (1 | Block:Plot_id),
+  ziformula = ~1,   # intercept-only zero inflation
+  data = richness_df,
+  family = nbinom2(link = "log")
+)
+summary(glmm_model_zinb)
+
+# Compare to Poisson fit using AIC
+AIC(glmm_model, glmm_model_nb,glmm_model_zinb)
+
+# Check residual diagnostics
+library(DHARMa)
+res_nbs <- simulateResiduals(glmm_model_zinb)
+plot(res_nbs)
+testDispersion(res_nbs)
+testZeroInflation(res_nbs)
+
+```
+
+GROWTH OF NATIVE SEEDLINGS MUKURA Croton megarocarpus
+
+```{r}
+library(readxl)
+# 1. Read the dataset
+df_mukura <- read_excel("/Users/blaise/Rwanda_National Parks/Restoration/Data_Mukura2.xlsx")
+```
+
+```{r}
+# Load packages
+library(lme4)
+library(ggplot2)
+library(emmeans)
+library(DHARMa)
+library(dplyr)
+
+# Ensure only survivors are included for growth analysis
+df_survivors <- df_mukura %>%
+  filter(!is.na(Diameter_Cm), !is.na(Length_Cm))
+
+# -----------------------------
+# 1. Fit models
+# -----------------------------
+# Diameter model
+glmm_diameter <- lmer(
+  Diameter_Cm ~ Treatment * Time + (1 | Seedling_id) + (1 | Block/Plot_id),
+  data = df_survivors
+)
+
+# Length model
+glmm_length <- lmer(
+  Length_Cm ~ Treatment * Time + (1 | Seedling_id) + (1 | Block/Plot_id),
+  data = df_survivors
+)
+
+
+```
+
+```{r}
+# -----------------------------
+# 2. Check residuals and assumptions
+# -----------------------------
+# Using DHARMa for simulated residuals
+res_diam <- simulateResiduals(glmm_diameter)
+plot(res_diam)
+testDispersion(res_diam)
+testZeroInflation(res_diam)
+
+res_len <- simulateResiduals(glmm_length)
+plot(res_len)
+testDispersion(res_len)
+testZeroInflation(res_len)
+
+
+```
+
+```{r}
+library(car)
+Anova(glmm_diameter,type="III",test="Chisq")
+Anova(glmm_length,type="III",test="Chisq")
+```
+
+```{r}
+# -----------------------------
+# 3. Estimated marginal means (EMMs) for interaction
+# -----------------------------
+emm_diam <- emmeans(glmm_diameter, ~ Treatment * Time)
+emm_len <- emmeans(glmm_length, ~ Treatment * Time)
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(patchwork) # for combining plots
+
+# -----------------------------
+# Ensure Time factor is ordered
+# -----------------------------
+emm_diam_df <- emm_diam %>%
+  as.data.frame() %>%
+  mutate(Time = factor(Time, levels = c("Before", "After")))
+
+emm_len_df <- emm_len %>%
+  as.data.frame() %>%
+  mutate(Time = factor(Time, levels = c("Before", "After")))
+
+# -----------------------------
+# Define custom colors for Treatments
+# -----------------------------
+custom_colors <- c(
+  "Effective removal + seedlings" = "#808000",  # olive green
+  "Poor removal + seedlings" = "#FF00FF"         # magenta
+  # You can add other treatments and their colors here if needed
+)
+
+# -----------------------------
+# Plot interaction for Diameter
+# -----------------------------
+plot_diam <- ggplot(emm_diam_df, aes(x = Time, y = emmean, color = Treatment, group = Treatment)) +
+  geom_point(position = position_dodge(width = 0.2), size = 3) +
+  geom_line(position = position_dodge(width = 0.2)) +
+  geom_errorbar(aes(ymin = emmean - SE, ymax = emmean + SE),
+                width = 0.1, position = position_dodge(width = 0.2)) +
+  scale_color_manual(values = custom_colors) +
+  labs(y = "Predicted Diameter (cm)", title = "Treatment × Time: Diameter") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# -----------------------------
+# Plot interaction for Length
+# -----------------------------
+plot_len <- ggplot(emm_len_df, aes(x = Time, y = emmean, color = Treatment, group = Treatment)) +
+  geom_point(position = position_dodge(width = 0.2), size = 3) +
+  geom_line(position = position_dodge(width = 0.2)) +
+  geom_errorbar(aes(ymin = emmean - SE, ymax = emmean + SE),
+                width = 0.1, position = position_dodge(width = 0.2)) +
+  scale_color_manual(values = custom_colors) +
+  labs(y = "Predicted Length (cm)", title = "Treatment × Time: Length") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# -----------------------------
+# Combine plots side-by-side (1:1)
+# -----------------------------
+combined_plot <- plot_diam + plot_len + plot_layout(ncol = 2)
+
+# Display
+combined_plot
+
+
+```
+
+```{r}
+# -----------------------------
+# Save as high-res PNG
+# -----------------------------
+ggsave(
+  filename = "Treatment_Time_Growth_Mukura.png",
+  plot = combined_plot,
+  width = 10, height = 5, units = "in", dpi = 600
+)
+
+# Display in R session
+combined_plot
+```
+
+GROWTH OF NATIVE SEEDLINGS GISHWATI
+
+```{r}
+# 1. Read the dataset
+df_gishwati <- read_excel("/Users/blaise/Rwanda_National Parks/Restoration/Data_Gishwati.xlsx")
+```
+
+```{r}
+# Load packages
+library(lme4)
+library(ggplot2)
+library(emmeans)
+library(DHARMa)
+library(dplyr)
+
+# Ensure only survivors are included for growth analysis
+df_survivors2 <- df_gishwati %>%
+  filter(!is.na(Diameter_Cm), !is.na(Length_Cm))
+
+# -----------------------------
+# 1. Fit models
+# -----------------------------
+# Diameter model
+glmm_diameter <- lmer(
+  Diameter_Cm ~ Species*Treatment * Time + (1 | Seedling_id) + (1 | Block/Plot_id),
+  data = df_survivors2
+)
+
+# Length model
+glmm_length <- lmer(
+  Length_Cm ~ Species*Treatment * Time + (1 | Seedling_id) + (1 | Block/Plot_id),
+  data = df_survivors2
+)
+
+
+```
+
+```{r}
+# -----------------------------
+# 2. Check residuals and assumptions
+# -----------------------------
+# Using DHARMa for simulated residuals
+res_diam <- simulateResiduals(glmm_diameter)
+plot(res_diam)
+testDispersion(res_diam)
+testZeroInflation(res_diam)
+
+res_len <- simulateResiduals(glmm_length)
+plot(res_len)
+testDispersion(res_len)
+testZeroInflation(res_len)
+
+
+```
+
+```{r}
+library(car)
+Anova(glmm_diameter,type="III",test="Chisq")
+Anova(glmm_length,type="III",test="Chisq")
+```
+
+```{r}
+# -----------------------------
+# 3. Estimated marginal means (EMMs) for interaction
+# -----------------------------
+emm_diam <- emmeans(glmm_diameter, ~ Species*Treatment * Time)
+emm_len <- emmeans(glmm_length, ~ Species*Treatment * Time)
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(patchwork) # for combining plots
+
+# -----------------------------
+# Ensure Time factor is ordered
+# -----------------------------
+emm_diam_df <- emm_diam %>%
+  as.data.frame() %>%
+  mutate(
+    Time = factor(Time, levels = c("Before", "After")),
+    Species = factor(Species, levels = c("Croton megalocarpus", "Newtonia buchananii"))
+  )
+
+emm_len_df <- emm_len %>%
+  as.data.frame() %>%
+  mutate(
+    Time = factor(Time, levels = c("Before", "After")),
+    Species = factor(Species, levels = c("Croton megalocarpus", "Newtonia buchananii"))
+  )
+
+# -----------------------------
+# Define custom colors for Treatments
+# -----------------------------
+custom_colors <- c(
+  "Effective debarking + seedlings" = "#808000",  # olive green
+  "No debarking + seedlings" = "#FF00FF"         # magenta
+)
+
+# -----------------------------
+# Plot interaction for Diameter
+# -----------------------------
+plot_diam <- ggplot(emm_diam_df, aes(x = Time, y = emmean, color = Treatment, group = Treatment)) +
+  geom_point(position = position_dodge(width = 0.2), size = 3) +
+  geom_line(position = position_dodge(width = 0.2)) +
+  geom_errorbar(aes(ymin = emmean - SE, ymax = emmean + SE),
+                width = 0.1, position = position_dodge(width = 0.2)) +
+  scale_color_manual(values = custom_colors) +
+  labs(y = "Predicted Diameter (cm)", title = "Treatment × Time × Species: Diameter") +
+  facet_wrap(~ Species) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# -----------------------------
+# Plot interaction for Length
+# -----------------------------
+plot_len <- ggplot(emm_len_df, aes(x = Time, y = emmean, color = Treatment, group = Treatment)) +
+  geom_point(position = position_dodge(width = 0.2), size = 3) +
+  geom_line(position = position_dodge(width = 0.2)) +
+  geom_errorbar(aes(ymin = emmean - SE, ymax = emmean + SE),
+                width = 0.1, position = position_dodge(width = 0.2)) +
+  scale_color_manual(values = custom_colors) +
+  labs(y = "Predicted Length (cm)", title = "Treatment × Time × Species: Length") +
+  facet_wrap(~ Species) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# -----------------------------
+# Combine plots side-by-side (1:1)
+# -----------------------------
+combined_plot <- plot_diam + plot_len + plot_layout(ncol = 2)
+
+# Display
+combined_plot
+
+```
+
+```{r}
+# -----------------------------
+# Save as high-res PNG
+# -----------------------------
+ggsave(
+  filename = "Treatment_Time_Growth_Gishwati.png",
+  plot = combined_plot,
+  width = 10, height = 5, units = "in", dpi = 600
+)
+
+# Display in R session
+combined_plot
+```
